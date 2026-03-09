@@ -2,7 +2,7 @@
 
 An MCP server for Ireland's National Transport Authority (NTA) public transport data. Provides focused, queryable tools that return small, human-readable results — not raw feed dumps.
 
-Inspired by [ireland-nta-mcp](https://github.com/dmarkey/ireland-nta-mcp).
+Inspired by [ireland-nta-mcp](https://github.com/dmarkey/ireland-nta-mcp) and [tfi-gtfs](https://github.com/seanblanchfield/tfi-gtfs).
 
 ## Tools
 
