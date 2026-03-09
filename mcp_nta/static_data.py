@@ -838,6 +838,7 @@ class StaticDataManager:
 
     def find_nearest_stops(
         self, lat: float, lon: float, limit: int = 10, route_short_name: str | None = None,
+        transport_type: str | None = None,
     ) -> list[Stop]:
         """Find the nearest stops using a bounding-box pre-filter + haversine sort.
 
@@ -846,6 +847,8 @@ class StaticDataManager:
         Python, so this stays fast even with very large databases.
 
         If *route_short_name* is given, only stops served by that route are returned.
+        If *transport_type* is given (``"bus"``, ``"rail"``, or ``"tram"``), only
+        stops served by routes of that type are returned.
         """
         from .util import haversine_km
 
@@ -869,31 +872,26 @@ class StaticDataManager:
 
             params: list = [lat - dlat, lat + dlat, lon - dlon, lon + dlon]
 
+            # Use INNER JOINs when filtering by route or transport type
+            needs_inner = route_ids or transport_type
+            join_type = "JOIN" if needs_inner else "LEFT JOIN"
+            sql = f"""
+                SELECT s.stop_id, s.name, s.latitude, s.longitude, s.street,
+                       GROUP_CONCAT(DISTINCT r.short_name)
+                FROM stops s
+                {join_type} stop_routes sr ON s.stop_id = sr.stop_id
+                {join_type} routes r ON sr.route_id = r.route_id
+                WHERE s.latitude BETWEEN ? AND ?
+                  AND s.longitude BETWEEN ? AND ?
+            """
             if route_ids:
                 route_placeholders = ",".join("?" * len(route_ids))
-                sql = f"""
-                    SELECT s.stop_id, s.name, s.latitude, s.longitude, s.street,
-                           GROUP_CONCAT(DISTINCT r.short_name)
-                    FROM stops s
-                    JOIN stop_routes sr ON s.stop_id = sr.stop_id
-                    JOIN routes r ON sr.route_id = r.route_id
-                    WHERE s.latitude BETWEEN ? AND ?
-                      AND s.longitude BETWEEN ? AND ?
-                      AND sr.route_id IN ({route_placeholders})
-                    GROUP BY s.stop_id
-                """
+                sql += f"  AND sr.route_id IN ({route_placeholders})\n"
                 params.extend(route_ids)
-            else:
-                sql = """
-                    SELECT s.stop_id, s.name, s.latitude, s.longitude, s.street,
-                           GROUP_CONCAT(DISTINCT r.short_name)
-                    FROM stops s
-                    LEFT JOIN stop_routes sr ON s.stop_id = sr.stop_id
-                    LEFT JOIN routes r ON sr.route_id = r.route_id
-                    WHERE s.latitude BETWEEN ? AND ?
-                      AND s.longitude BETWEEN ? AND ?
-                    GROUP BY s.stop_id
-                """
+            if transport_type:
+                sql += "  AND r.route_type = ?\n"
+                params.append(transport_type.lower())
+            sql += "GROUP BY s.stop_id"
 
             rows = db.execute(sql, params).fetchall()
 

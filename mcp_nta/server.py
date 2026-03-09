@@ -43,11 +43,11 @@ mcp = FastMCP("mcp-nta", lifespan=_app_lifespan)
 # -- Tools ----------------------------------------------------------------
 
 @mcp.tool
-async def search_stops(
-    query: Annotated[str, "Search term, e.g. 'Oaktree Green', 'O'Connell Street'"],
+async def search_transport(
+    query: Annotated[str, "Search term, e.g. 'Oaktree Green', 'O'Connell Street', 'Heuston'"],
     limit: Annotated[int, "Max results (default 5)"] = 5,
 ) -> str:
-    """Find Irish public transport stops by name. Returns stop IDs, locations, and routes served."""
+    """Search for Irish public transport locations by name. Covers bus stops, train stations (Irish Rail, DART), and tram/Luas stops. Returns IDs, locations, and routes served."""
     assert _static is not None
     return await _search_stops(_static, query, limit)
 
@@ -63,12 +63,12 @@ async def search_routes(
 
 
 @mcp.tool
-async def get_stop_departures(
-    stop_id: Annotated[str, "Stop ID (use search_stops to find it)"],
+async def get_departures(
+    stop_id: Annotated[str, "Stop/station ID (use search_transport to find it)"],
     route: Annotated[str | None, "Filter by route short name, e.g. '37'"] = None,
     minutes: Annotated[int, "Time window in minutes (default 60, max 120)"] = 60,
 ) -> str:
-    """Get upcoming real-time departures from a specific stop, optionally filtered by route."""
+    """Get upcoming real-time departures from a bus stop, train station, or tram stop, optionally filtered by route."""
     assert _static is not None and _realtime is not None
     return await _get_stop_departures(_static, _realtime, stop_id, route, min(minutes, 120))
 
@@ -97,26 +97,27 @@ async def get_service_alerts(
 
 
 @mcp.tool
-async def get_route_stops(
+async def get_route_transport(
     route: Annotated[str, "Route short name, e.g. '37'"],
     direction: Annotated[Literal["inbound", "outbound"] | None, "'inbound' or 'outbound' (default: both)"] = None,
 ) -> str:
-    """List all stops on a given route in order."""
+    """List all bus stops, train stations, or tram stops on a given route in order."""
     assert _static is not None
     return await _get_route_stops(_static, route, direction)
 
 
 @mcp.tool
-async def nearby_stops(
+async def nearby_transport(
     latitude: Annotated[float, "Latitude of the location"],
     longitude: Annotated[float, "Longitude of the location"],
     route: Annotated[str | None, "Filter by route short name, e.g. '37'"] = None,
-    radius_km: Annotated[float | None, "Only return stops within this radius in km"] = None,
+    radius_km: Annotated[float | None, "Only return results within this radius in km"] = None,
+    transport_type: Annotated[Literal["bus", "rail", "tram"] | None, "Filter by mode: 'bus', 'rail' (Irish Rail/DART), or 'tram' (Luas). Default: all types."] = None,
     limit: Annotated[int, "Max results (default 10)"] = 10,
 ) -> str:
-    """Find the nearest public transport stops to a given lat/lon. Use this when a user mentions a place or location. Optionally filter by route or radius. Returns stop details, routes served, and distance."""
+    """Find the nearest bus stops, train stations (Irish Rail, DART), and tram/Luas stops to a given lat/lon. Use this when a user mentions a place or location. Optionally filter by route, radius, or transport type. Returns details, routes served, and distance."""
     assert _static is not None
-    return await _nearby_stops(_static, latitude, longitude, limit, route, radius_km)
+    return await _nearby_stops(_static, latitude, longitude, limit, route, radius_km, transport_type)
 
 
 # -- Lifecycle -------------------------------------------------------------

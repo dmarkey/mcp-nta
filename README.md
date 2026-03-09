@@ -8,13 +8,13 @@ Built with [FastMCP](https://github.com/PrefectHQ/fastmcp). Inspired by [ireland
 
 | Tool | Description |
 |------|-------------|
-| `search_stops` | Find stops by name. Returns IDs, locations, routes served. |
+| `search_transport` | Find bus stops, train stations, and tram stops by name. Returns IDs, locations, routes served. |
 | `search_routes` | Find routes by number or name. |
-| `get_stop_departures` | Real-time departures from a stop, filtered by route/time window. |
+| `get_departures` | Real-time departures from a bus stop, train station, or tram stop, filtered by route/time window. |
 | `get_vehicle_positions` | Live vehicle positions filtered by route or proximity. |
 | `get_service_alerts` | Active service alerts filtered by route or stop. |
-| `get_route_stops` | Ordered list of stops on a route. |
-| `nearby_stops` | Find the nearest stops to a location, optionally filtered by route. |
+| `get_route_transport` | Ordered list of bus stops, train stations, or tram stops on a route. |
+| `nearby_transport` | Find the nearest bus stops, train stations, and tram stops to a location. Filter by route, radius, or transport type (`bus`, `rail`, `tram`). |
 
 ## Installation
 
@@ -135,7 +135,7 @@ Each tool combines a targeted SQLite query against the static schedule with the 
 
 > "What buses are due at Oaktree Green for the 37?"
 
-The LLM calls `search_stops(query="Oaktree Green")`, gets back stop IDs, then calls `get_stop_departures(stop_id="8240DB001682", route="37")` and gets:
+The LLM calls `search_transport(query="Oaktree Green")`, gets back stop IDs, then calls `get_departures(stop_id="8240DB001682", route="37")` and gets:
 
 ```
 Upcoming departures from Oaktree Green (stop 8240DB001682) for route 37:

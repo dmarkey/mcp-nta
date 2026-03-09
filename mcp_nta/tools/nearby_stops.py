@@ -13,11 +13,15 @@ async def nearby_stops(
     limit: int = 10,
     route: str | None = None,
     radius_km: float | None = None,
+    transport_type: str | None = None,
 ) -> str:
     await static.ensure_loaded()
     # Fetch more candidates when filtering by radius so we don't miss stops
     fetch_limit = max(limit, 50) if radius_km else limit
-    stops = static.find_nearest_stops(latitude, longitude, fetch_limit, route_short_name=route)
+    stops = static.find_nearest_stops(
+        latitude, longitude, fetch_limit,
+        route_short_name=route, transport_type=transport_type,
+    )
 
     if radius_km is not None:
         stops = [
