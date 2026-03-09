@@ -12,13 +12,26 @@ async def nearby_stops(
     longitude: float,
     limit: int = 10,
     route: str | None = None,
+    radius_km: float | None = None,
 ) -> str:
     await static.ensure_loaded()
-    stops = static.find_nearest_stops(latitude, longitude, limit, route_short_name=route)
+    # Fetch more candidates when filtering by radius so we don't miss stops
+    fetch_limit = max(limit, 50) if radius_km else limit
+    stops = static.find_nearest_stops(latitude, longitude, fetch_limit, route_short_name=route)
+
+    if radius_km is not None:
+        stops = [
+            s for s in stops
+            if haversine_km(latitude, longitude, s.latitude, s.longitude) <= radius_km
+        ]
+    stops = stops[:limit]
+
     if not stops:
         msg = f"No stops found near ({latitude}, {longitude})"
         if route:
             msg += f" on route {route}"
+        if radius_km is not None:
+            msg += f" within {radius_km} km"
         return msg + "."
 
     header = f"Nearest {len(stops)} stop(s) to ({latitude:.5f}, {longitude:.5f})"

@@ -111,11 +111,12 @@ async def nearby_stops(
     latitude: Annotated[float, "Latitude of the location"],
     longitude: Annotated[float, "Longitude of the location"],
     route: Annotated[str | None, "Filter by route short name, e.g. '37'"] = None,
+    radius_km: Annotated[float | None, "Only return stops within this radius in km"] = None,
     limit: Annotated[int, "Max results (default 10)"] = 10,
 ) -> str:
-    """Find the nearest public transport stops to a given location. Optionally filter by route. Returns stop details, routes served, and distance."""
+    """Find the nearest public transport stops to a given lat/lon. Use this when a user mentions a place or location. Optionally filter by route or radius. Returns stop details, routes served, and distance."""
     assert _static is not None
-    return await _nearby_stops(_static, latitude, longitude, limit, route)
+    return await _nearby_stops(_static, latitude, longitude, limit, route, radius_km)
 
 
 # -- Lifecycle -------------------------------------------------------------
