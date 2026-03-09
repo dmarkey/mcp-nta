@@ -21,9 +21,9 @@ from .tools.vehicle_positions import get_vehicle_positions
 logger = logging.getLogger(__name__)
 
 
-async def serve(api_key: str) -> None:
+async def serve(api_key: str, route_filter: list[str] | None = None, ttl: int = 24 * 60 * 60) -> None:
     """Run the NTA MCP server."""
-    static = StaticDataManager()
+    static = StaticDataManager(route_filter=route_filter, ttl=ttl)
     realtime = RealtimeClient(api_key)
     server = Server("mcp-nta")
 

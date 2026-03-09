@@ -8,7 +8,7 @@ from ..static_data import StaticDataManager
 from ..util import haversine_km
 
 
-async def get_vehicle_positions(
+async def get_vehicle_positions(  # noqa: PLR0913
     static: StaticDataManager,
     realtime: RealtimeClient,
     route: str | None = None,
@@ -54,7 +54,7 @@ async def get_vehicle_positions(
         speed = v.position.speed * 3.6 if v.position.speed else None
 
         # Find nearest stop
-        nearest = _nearest_stop_name(static, vlat, vlon)
+        nearest = static.find_nearest_stop_name(vlat, vlon)
 
         positions.append(
             VehiclePosition(
@@ -84,16 +84,3 @@ async def get_vehicle_positions(
     return "\n".join(lines)
 
 
-def _nearest_stop_name(static: StaticDataManager, lat: float, lon: float) -> str:
-    """Find the name of the nearest stop to the given coordinates."""
-    best_name = "unknown"
-    best_dist = float("inf")
-    # Sample a subset to avoid scanning all stops on every call
-    for stop in static._stops.values():
-        d = haversine_km(lat, lon, stop.latitude, stop.longitude)
-        if d < best_dist:
-            best_dist = d
-            best_name = stop.name
-            if d < 0.05:  # within 50m, good enough
-                break
-    return best_name
