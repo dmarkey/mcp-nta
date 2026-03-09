@@ -3,9 +3,8 @@
 Inspired by ireland-nta-mcp (https://github.com/dmarkey/ireland-nta-mcp).
 """
 
-from .server import serve
+from .server import create_server
 
-import asyncio
 import os
 
 from dotenv import load_dotenv
@@ -29,7 +28,19 @@ def main() -> None:
     route_filter = _parse_route_filter()
     ttl_hours = float(os.getenv("NTA_REFRESH_HOURS", "24"))
     ttl = int(ttl_hours * 3600)
-    asyncio.run(serve(api_key, route_filter=route_filter, ttl=ttl))
+
+    transport = os.getenv("NTA_TRANSPORT", "stdio").lower()
+    host = os.getenv("NTA_HOST", "0.0.0.0")
+    port = int(os.getenv("NTA_PORT", "8000"))
+
+    server = create_server(api_key, route_filter=route_filter, ttl=ttl)
+
+    kwargs: dict = {"transport": transport}
+    if transport in ("http", "sse"):
+        kwargs["host"] = host
+        kwargs["port"] = port
+
+    server.run(**kwargs)
 
 
 if __name__ == "__main__":

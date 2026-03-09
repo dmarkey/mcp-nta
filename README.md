@@ -2,7 +2,7 @@
 
 An MCP server for Ireland's National Transport Authority (NTA) public transport data. Provides focused, queryable tools that return small, human-readable results — not raw feed dumps.
 
-Inspired by [ireland-nta-mcp](https://github.com/dmarkey/ireland-nta-mcp) and [tfi-gtfs](https://github.com/seanblanchfield/tfi-gtfs).
+Built with [FastMCP](https://github.com/PrefectHQ/fastmcp). Inspired by [ireland-nta-mcp](https://github.com/dmarkey/ireland-nta-mcp) and [tfi-gtfs](https://github.com/seanblanchfield/tfi-gtfs).
 
 ## Tools
 
@@ -14,6 +14,7 @@ Inspired by [ireland-nta-mcp](https://github.com/dmarkey/ireland-nta-mcp) and [t
 | `get_vehicle_positions` | Live vehicle positions filtered by route or proximity. |
 | `get_service_alerts` | Active service alerts filtered by route or stop. |
 | `get_route_stops` | Ordered list of stops on a route. |
+| `nearby_stops` | Find the nearest stops to a location, optionally filtered by route. |
 
 ## Installation
 
@@ -35,8 +36,11 @@ python -m mcp_nta
 | `NTA_API_KEY` | Yes | — | API key from the [NTA developer portal](https://developer.nationaltransport.ie/) |
 | `NTA_ROUTES` | No | *(all routes)* | Comma-separated whitelist of routes to index (see [Route filtering](#route-filtering)) |
 | `NTA_REFRESH_HOURS` | No | `24` | How often to re-download GTFS data (in hours) |
+| `NTA_TRANSPORT` | No | `stdio` | Transport protocol: `stdio`, `http` (streamable HTTP), or `sse` |
+| `NTA_HOST` | No | `0.0.0.0` | Bind address (http/sse only) |
+| `NTA_PORT` | No | `8000` | Port (http/sse only) |
 
-### Claude Desktop / Claude Code
+### Claude Desktop / Claude Code (stdio)
 
 ```json
 {
@@ -52,6 +56,22 @@ python -m mcp_nta
   }
 }
 ```
+
+### Remote access (HTTP)
+
+```bash
+NTA_API_KEY=YOUR_KEY NTA_TRANSPORT=http NTA_PORT=8000 mcp-nta
+```
+
+The server will be available at `http://localhost:8000/mcp`. Any MCP client that supports streamable HTTP can connect to this URL.
+
+### SSE (legacy)
+
+```bash
+NTA_API_KEY=YOUR_KEY NTA_TRANSPORT=sse NTA_PORT=8000 mcp-nta
+```
+
+Available at `http://localhost:8000/sse`. Maintained for backward compatibility — prefer `http` for new deployments.
 
 ## Route filtering
 

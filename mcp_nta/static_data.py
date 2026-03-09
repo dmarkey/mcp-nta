@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import math
 import datetime
 import io
 import logging
@@ -145,6 +146,8 @@ CREATE INDEX IF NOT EXISTS idx_routes_short_name ON routes (short_name COLLATE N
 CREATE INDEX IF NOT EXISTS idx_stops_name ON stops (name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_stop_routes_stop ON stop_routes (stop_id);
 CREATE INDEX IF NOT EXISTS idx_route_stops_ordered ON route_stops_ordered (route_id, stop_sequence);
+CREATE INDEX IF NOT EXISTS idx_stops_lat ON stops (latitude);
+CREATE INDEX IF NOT EXISTS idx_stops_lon ON stops (longitude);
 """
 
 
@@ -832,6 +835,93 @@ class StaticDataManager:
             "SELECT route_id FROM trips WHERE trip_id = ?", (trip_id,)
         ).fetchone()
         return row[0] if row else None
+
+    def find_nearest_stops(
+        self, lat: float, lon: float, limit: int = 10, route_short_name: str | None = None,
+    ) -> list[Stop]:
+        """Find the nearest stops using a bounding-box pre-filter + haversine sort.
+
+        Starts with a tight box (~2 km) and widens if fewer than *limit* candidates
+        are found, up to ~50 km.  Only the small candidate set is distance-sorted in
+        Python, so this stays fast even with very large databases.
+
+        If *route_short_name* is given, only stops served by that route are returned.
+        """
+        from .util import haversine_km
+
+        db = self._get_db()
+
+        # Resolve optional route filter to route_ids
+        route_ids: list[str] | None = None
+        if route_short_name:
+            route_ids = self.get_route_ids_by_short_name(route_short_name)
+            if not route_ids:
+                return []
+
+        # Approximate degrees-per-km at this latitude
+        km_per_deg_lat = 111.0
+        km_per_deg_lon = 111.0 * math.cos(math.radians(lat))
+
+        # Iteratively widen the bounding box until we have enough candidates
+        for radius_km in (2, 5, 15, 50):
+            dlat = radius_km / km_per_deg_lat
+            dlon = radius_km / max(km_per_deg_lon, 1.0)
+
+            params: list = [lat - dlat, lat + dlat, lon - dlon, lon + dlon]
+
+            if route_ids:
+                route_placeholders = ",".join("?" * len(route_ids))
+                sql = f"""
+                    SELECT s.stop_id, s.name, s.latitude, s.longitude, s.street,
+                           GROUP_CONCAT(DISTINCT r.short_name)
+                    FROM stops s
+                    JOIN stop_routes sr ON s.stop_id = sr.stop_id
+                    JOIN routes r ON sr.route_id = r.route_id
+                    WHERE s.latitude BETWEEN ? AND ?
+                      AND s.longitude BETWEEN ? AND ?
+                      AND sr.route_id IN ({route_placeholders})
+                    GROUP BY s.stop_id
+                """
+                params.extend(route_ids)
+            else:
+                sql = """
+                    SELECT s.stop_id, s.name, s.latitude, s.longitude, s.street,
+                           GROUP_CONCAT(DISTINCT r.short_name)
+                    FROM stops s
+                    LEFT JOIN stop_routes sr ON s.stop_id = sr.stop_id
+                    LEFT JOIN routes r ON sr.route_id = r.route_id
+                    WHERE s.latitude BETWEEN ? AND ?
+                      AND s.longitude BETWEEN ? AND ?
+                    GROUP BY s.stop_id
+                """
+
+            rows = db.execute(sql, params).fetchall()
+
+            if len(rows) >= limit:
+                break
+
+        if not rows:
+            return []
+
+        # Compute actual distances and pick the closest
+        scored: list[tuple[float, tuple]] = []
+        for row in rows:
+            dist = haversine_km(lat, lon, row[2], row[3])
+            scored.append((dist, row))
+
+        scored.sort(key=lambda x: x[0])
+
+        results: list[Stop] = []
+        for dist, row in scored[:limit]:
+            stop = Stop(
+                stop_id=row[0], name=row[1], latitude=row[2],
+                longitude=row[3], street=row[4],
+            )
+            if row[5]:
+                stop.routes_served = sorted(row[5].split(","))
+            results.append(stop)
+
+        return results
 
     def find_nearest_stop_name(self, lat: float, lon: float) -> str:
         """Find the name of the nearest stop (approximate, using bounding box)."""
