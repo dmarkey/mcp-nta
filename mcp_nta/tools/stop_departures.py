@@ -170,8 +170,21 @@ async def get_stop_departures(
         route_info = f" for route {route}" if route else ""
         return f"No upcoming departures from {stop_name} (stop {stop_id}){route_info} in the next {minutes} minutes."
 
+    # Feed freshness indicator
+    feed_age = realtime.get_feed_age(feed)
+    if feed_age is not None and feed_age > 120:
+        freshness = f"⚠ Real-time data is {feed_age // 60}m {feed_age % 60}s old — may be stale"
+    elif feed_age is not None:
+        freshness = f"Real-time data age: {feed_age}s"
+    else:
+        freshness = "Real-time feed timestamp unavailable"
+
+    live_count = sum(1 for d in departures if d.status != "scheduled")
+    sched_count = len(departures) - live_count
+
     route_info = f" for route {route}" if route else ""
-    lines = [f"Upcoming departures from {stop_name} (stop {stop_id}){route_info}:\n"]
+    lines = [f"Upcoming departures from {stop_name} (stop {stop_id}){route_info}:"]
+    lines.append(f"[{freshness} | {live_count} live, {sched_count} scheduled-only]\n")
     for i, dep in enumerate(departures, 1):
         pred_str = format_time(dep.predicted)
         rel = relative_time(dep.predicted, now)

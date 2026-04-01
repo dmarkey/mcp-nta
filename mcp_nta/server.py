@@ -17,6 +17,7 @@ from .tools.search_routes import search_routes as _search_routes
 from .tools.search_stops import search_stops as _search_stops
 from .tools.service_alerts import get_service_alerts as _get_service_alerts
 from .tools.stop_departures import get_stop_departures as _get_stop_departures
+from .tools.track_route import track_route as _track_route
 from .tools.vehicle_positions import get_vehicle_positions as _get_vehicle_positions
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,18 @@ async def get_departures(
     """Get upcoming real-time departures from a bus stop, train station, or tram stop, optionally filtered by route."""
     assert _static is not None and _realtime is not None
     return await _get_stop_departures(_static, _realtime, stop_id, route, min(minutes, 120))
+
+
+@mcp.tool
+async def track_route(
+    route: Annotated[str, "Route short name, e.g. '37'"],
+    stop_ids: Annotated[list[str] | None, "Specific stop IDs to show predictions for (optional — omit to show all stops on route)"] = None,
+    direction: Annotated[str | None, "Filter by destination keyword, e.g. 'Wilton' or 'Blanchardstown'"] = None,
+    minutes: Annotated[int, "Time window in minutes (default 60)"] = 60,
+) -> str:
+    """Track all active buses/vehicles on a route. Shows vehicle positions and predicted arrivals at specific stops. Use this when single-stop data seems stale — it cross-references vehicle GPS, trip predictions, and multiple stops to give a fuller picture of where buses actually are."""
+    assert _static is not None and _realtime is not None
+    return await _track_route(_static, _realtime, route, stop_ids, direction, min(minutes, 120))
 
 
 @mcp.tool
