@@ -9,6 +9,7 @@ upstream stop on the same trip (matching the approach used by tfi-gtfs).
 from __future__ import annotations
 
 import datetime
+from typing import NamedTuple
 
 from ..models import Departure
 from ..realtime import RealtimeClient, stop_time_prediction
@@ -16,65 +17,101 @@ from ..static_data import StaticDataManager
 from ..util import delay_text, format_time, relative_time
 
 
-def _build_live_delays(
-    feed, static: StaticDataManager
-) -> dict[str, list[tuple[int, int | None, datetime.datetime | None]]]:
-    """Parse the TripUpdates feed into a lookup: trip_id -> sorted list of
-    (stop_sequence, delay_seconds | None, arrival_datetime | None).
+class _Prediction(NamedTuple):
+    """One realtime prediction for a single stop of a single trip."""
 
-    For each stop_time_update we store either:
-      - An absolute arrival time (if arrival.time > 0)
-      - A delay in seconds (if only delay is provided)
+    stop_sequence: int
+    delay: int | None
+    arrival: datetime.datetime | None
+    stop_id: str
+
+
+def _build_live_delays(feed, static: StaticDataManager) -> dict[str, list[_Prediction]]:
+    """Parse the TripUpdates feed into trip_id -> predictions, ordered by stop.
+
+    ``stop_id`` is carried through so a prediction that only gives an absolute
+    arrival time can later be converted into a delay using that stop's own
+    scheduled time.
     """
     # https://developers.google.com/transit/gtfs-realtime/reference#enum-schedulerelationship
     STOP_SCHEDULED = 0
 
-    delays: dict[str, list[tuple[int, int | None, datetime.datetime | None]]] = {}
+    predictions: dict[str, list[_Prediction]] = {}
     for entity in feed.entity:
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
-        trip_id = tu.trip.trip_id
-        trip_delays: list[tuple[int, int | None, datetime.datetime | None]] = []
+        trip_preds: list[_Prediction] = []
 
         for stu in tu.stop_time_update:
             if stu.schedule_relationship != STOP_SCHEDULED:
                 continue
+            arrival, delay = stop_time_prediction(stu)
+            trip_preds.append(
+                _Prediction(stu.stop_sequence, delay, arrival, stu.stop_id)
+            )
 
-            seq = stu.stop_sequence
-            arrival_time_abs, delay = stop_time_prediction(stu)
-            trip_delays.append((seq, delay, arrival_time_abs))
+        if trip_preds:
+            trip_preds.sort(key=lambda p: p.stop_sequence)
+            predictions[tu.trip.trip_id] = trip_preds
 
-        if trip_delays:
-            trip_delays.sort(key=lambda x: x[0])
-            delays[trip_id] = trip_delays
-
-    return delays
+    return predictions
 
 
-def _get_live_delay(
-    trip_delays: list[tuple[int, int | None, datetime.datetime | None]],
-    stop_sequence: int,
-) -> tuple[int | None, datetime.datetime | None]:
-    """Binary search for the delay at or before the given stop_sequence.
+def _find_prediction(
+    preds: list[_Prediction], stop_sequence: int
+) -> tuple[_Prediction | None, bool]:
+    """Binary search for the prediction at, or nearest before, *stop_sequence*.
 
-    Returns (delay_seconds, absolute_arrival) — one or both may be None.
+    Returns ``(prediction, is_exact)``, or ``(None, False)`` when nothing on
+    the trip precedes the stop.
     """
-    left, right = 0, len(trip_delays) - 1
+    left, right = 0, len(preds) - 1
     while left <= right:
         mid = (left + right) // 2
-        if trip_delays[mid][0] < stop_sequence:
+        if preds[mid].stop_sequence < stop_sequence:
             left = mid + 1
-        elif trip_delays[mid][0] > stop_sequence:
+        elif preds[mid].stop_sequence > stop_sequence:
             right = mid - 1
         else:
-            # Exact match
-            return trip_delays[mid][1], trip_delays[mid][2]
+            return preds[mid], True
 
-    # No exact match — use the closest preceding stop
     if left == 0:
-        return None, None
-    return trip_delays[left - 1][1], None  # Don't use abs time from a different stop
+        return None, False
+    return preds[left - 1], False
+
+
+def _resolve_delay(
+    pred: _Prediction,
+    is_exact: bool,
+    trip_id: str,
+    scheduled_dt: datetime.datetime,
+    now: datetime.datetime,
+    static: StaticDataManager,
+) -> tuple[datetime.datetime, int] | None:
+    """Turn a prediction into (predicted_arrival, delay_seconds), or None.
+
+    An absolute arrival time is only meaningful for the stop it was issued
+    for; for an upstream stop we recover a delay by comparing it against that
+    stop's scheduled time, which is how a running-late trip propagates to
+    stops it has not reached yet.
+    """
+    if is_exact and pred.arrival is not None:
+        return pred.arrival, int((pred.arrival - scheduled_dt).total_seconds())
+
+    if pred.delay is not None:
+        return scheduled_dt + datetime.timedelta(seconds=pred.delay), pred.delay
+
+    if pred.arrival is not None and pred.stop_id:
+        upstream = static.get_scheduled_arrival(
+            trip_id, pred.stop_id, pred.stop_sequence, now
+        )
+        if upstream is not None:
+            delay = int((pred.arrival - upstream).total_seconds())
+            if abs(delay) <= 7 * 24 * 60 * 60:
+                return scheduled_dt + datetime.timedelta(seconds=delay), delay
+
+    return None
 
 
 async def get_stop_departures(
@@ -118,19 +155,21 @@ async def get_stop_departures(
         predicted_dt = scheduled_dt
         status = "scheduled"
 
-        trip_delays = live_delays.get(entry.trip_id)
-        if trip_delays:
-            delay, abs_arrival = _get_live_delay(trip_delays, entry.stop_sequence)
-            if abs_arrival is not None:
-                predicted_dt = abs_arrival
-                delay_seconds = int((predicted_dt - scheduled_dt).total_seconds())
-                status = "on time" if abs(delay_seconds) < 60 else ("late" if delay_seconds > 0 else "early")
-            elif delay is not None:
-                delay_seconds = delay
-                predicted_dt = scheduled_dt + datetime.timedelta(seconds=delay)
-                status = "on time" if abs(delay) < 60 else ("late" if delay > 0 else "early")
-            else:
-                status = "scheduled"
+        trip_preds = live_delays.get(entry.trip_id)
+        if trip_preds:
+            pred, is_exact = _find_prediction(trip_preds, entry.stop_sequence)
+            resolved = (
+                _resolve_delay(pred, is_exact, entry.trip_id, scheduled_dt, now, static)
+                if pred is not None
+                else None
+            )
+            if resolved is not None:
+                predicted_dt, delay_seconds = resolved
+                status = (
+                    "on time"
+                    if abs(delay_seconds) < 60
+                    else ("late" if delay_seconds > 0 else "early")
+                )
 
         # Skip if already departed
         if predicted_dt < now - datetime.timedelta(minutes=1):

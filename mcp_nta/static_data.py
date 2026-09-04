@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import functools
 import math
 import datetime
 import io
@@ -50,6 +51,17 @@ class StopTimeEntry:
 
 
 VALID_ROUTE_TYPES = {"bus", "rail", "tram"}
+
+
+@functools.lru_cache(maxsize=1)
+def _dublin_tz() -> datetime.tzinfo:
+    """The agency timezone, falling back to UTC if tzdata is unavailable."""
+    try:
+        import zoneinfo
+        return zoneinfo.ZoneInfo("Europe/Dublin")
+    except Exception:
+        logger.warning("Europe/Dublin timezone unavailable, falling back to UTC")
+        return datetime.timezone.utc
 
 
 def _filter_cache_key(route_filter: list[str] | None) -> str:
@@ -627,6 +639,41 @@ class StaticDataManager:
         ).fetchall()
         return sum(n for service_id, n in rows if self.is_service_running(service_id, date))
 
+    def get_scheduled_arrival(
+        self, trip_id: str, stop_id: str, stop_sequence: int, now: datetime.datetime
+    ) -> datetime.datetime | None:
+        """Absolute scheduled arrival of one trip at one stop.
+
+        *stop_id* is part of the lookup so it can ride the
+        ``(stop_id, hour_key)`` index — querying stop_times by trip alone would
+        scan all several-million rows.  Applies the same 12-hour rollover
+        convention as :meth:`get_scheduled_stop_times` so overnight trips land
+        on the right date.
+        """
+        db = self._get_db()
+        row = db.execute(
+            """
+            SELECT st.arrival_hour, st.arrival_min, st.arrival_sec
+            FROM stop_times st
+            JOIN trips t ON st.trip_rowid = t.trip_rowid
+            WHERE st.stop_id = ? AND t.trip_id = ? AND st.stop_sequence = ?
+            """,
+            (stop_id, trip_id, stop_sequence),
+        ).fetchone()
+        if row is None:
+            return None
+
+        tz = _dublin_tz()
+        now_local = now.astimezone(tz)
+        now_naive = now_local.replace(tzinfo=None)
+        midnight = now_naive.replace(hour=0, minute=0, second=0, microsecond=0)
+        naive = midnight + datetime.timedelta(
+            hours=row[0], minutes=row[1], seconds=row[2]
+        )
+        if (now_naive - naive).total_seconds() > 12 * 3600:
+            naive += datetime.timedelta(days=1)
+        return naive.replace(tzinfo=tz)
+
     def get_scheduled_stop_times(
         self,
         stop_id: str,
@@ -635,12 +682,7 @@ class StaticDataManager:
         route_ids: set[str] | None = None,
     ) -> list[tuple[StopTimeEntry, datetime.datetime]]:
         """Get scheduled arrivals at a stop, filtered by calendar and time window."""
-        try:
-            import zoneinfo
-            dublin_tz = zoneinfo.ZoneInfo("Europe/Dublin")
-        except Exception:
-            dublin_tz = datetime.timezone.utc
-
+        dublin_tz = _dublin_tz()
         now_local = now.astimezone(dublin_tz)
         today = now_local.date()
         now_naive = now_local.replace(tzinfo=None)
