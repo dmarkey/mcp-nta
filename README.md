@@ -15,6 +15,20 @@ Built with [FastMCP](https://github.com/PrefectHQ/fastmcp). Inspired by [ireland
 | `get_service_alerts` | Active service alerts filtered by route or stop. |
 | `get_route_transport` | Ordered list of bus stops, train stations, or tram stops on a route. |
 | `nearby_transport` | Find the nearest bus stops, train stations, and tram stops to a location. Filter by route, radius, or transport type (`bus`, `rail`, `tram`). |
+| `watch_departures` | Get a push notification when a bus/train is N minutes from a stop, optionally only in a daily time window and toward a given direction. |
+| `list_watches` / `cancel_watch` | Review and cancel active departure watches. |
+
+### Departure watches (push notifications)
+
+`watch_departures` registers a standing rule — e.g. *"between 08:00 and 12:00, tell me when a 37 toward Wilton Terrace is 20 minutes from my stop"* — and returns immediately. A background loop polls the same real-time departure logic and, when a matching departure crosses the lead time, pushes an **MCP log notification** to your session (`logger="events"`, payload `{"event": "bus_approaching", ...}`). Each matching trip fires once per day.
+
+```
+watch_departures(stop_id="8220DB000315", route="37",
+                 direction="Wilton Terrace", lead_minutes=20,
+                 window="08:00-12:00")
+```
+
+Requires a **persistent session** — the default `stdio` transport (one session per process) or HTTP with `NTA_STATELESS=false`. Your MCP client must also surface server log notifications for you to see them. Notifications are built from real-time predictions where available and fall back to the schedule otherwise (the payload's `live` flag says which); routes the NTA feed does not report in real time, and the post-midnight service-day window, are subject to the same coverage limits as `get_departures`.
 
 ## Installation
 

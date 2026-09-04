@@ -32,7 +32,8 @@ class Departure:
     scheduled: datetime
     predicted: datetime
     delay_seconds: int
-    status: str  # "on time", "late", "early", "cancelled"
+    status: str  # "on time", "late", "early", "scheduled", "cancelled"
+    trip_id: str = ""
 
 
 @dataclass

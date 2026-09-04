@@ -11,6 +11,7 @@ from fastmcp.server.lifespan import lifespan
 
 from .realtime import RealtimeClient
 from .static_data import StaticDataManager
+from .watch import WatchRegistry, make_watch
 from .tools.nearby_stops import nearby_stops as _nearby_stops
 from .tools.route_stops import get_route_stops as _get_route_stops
 from .tools.search_routes import search_routes as _search_routes
@@ -25,17 +26,33 @@ logger = logging.getLogger(__name__)
 # These are set by create_server() before mcp.run() is called.
 _static: StaticDataManager | None = None
 _realtime: RealtimeClient | None = None
+_watches: WatchRegistry | None = None
+
+
+def _client_name(ctx: Context) -> str:
+    """Stable identity for the connected client, so watch delivery survives a
+    reconnect (a new session for the same client takes over its watches)."""
+    try:
+        return ctx.session.client_params.clientInfo.name or "unknown"  # type: ignore[union-attr]
+    except Exception:
+        return "unknown"
 
 
 @lifespan
 async def _app_lifespan(server):
-    """Start the background data loader when the server starts."""
-    assert _static is not None
-    task = asyncio.create_task(_background_loader(_static))
+    """Start the background data loader and the departure-watch poller."""
+    assert _static is not None and _realtime is not None
+    global _watches
+    _watches = WatchRegistry(_static, _realtime)
+    tasks = [
+        asyncio.create_task(_background_loader(_static)),
+        asyncio.create_task(_watches.run()),
+    ]
     try:
         yield {}
     finally:
-        task.cancel()
+        for task in tasks:
+            task.cancel()
 
 
 mcp = FastMCP("mcp-nta", lifespan=_app_lifespan)
@@ -136,6 +153,66 @@ async def nearby_transport(
     """Find the nearest bus stops, train stations (Irish Rail, DART), and tram/Luas stops to a given lat/lon. Use this when a user mentions a place or location. Optionally filter by route, radius, or transport type. Returns details, routes served, and distance."""
     assert _static is not None
     return await _nearby_stops(_static, latitude, longitude, limit, route, radius_km, transport_type)
+
+
+# -- Departure watches -----------------------------------------------------
+
+@mcp.tool
+async def watch_departures(
+    ctx: Context,
+    stop_id: Annotated[str, "Stop/station ID to watch (use search_transport to find it)"],
+    route: Annotated[str | None, "Route short name to watch, e.g. '37'"] = None,
+    direction: Annotated[str | None, "Only match this direction — a substring of the destination/headsign, e.g. 'Wilton Terrace'"] = None,
+    lead_minutes: Annotated[int, "Notify when a matching departure is this many minutes away (1-120, default 20)"] = 20,
+    window: Annotated[str | None, "Only notify during this local time window, 'HH:MM-HH:MM', e.g. '08:00-12:00'. Omit for any time."] = None,
+) -> str:
+    """Get a push notification when a bus/train is a set number of minutes from a stop.
+
+    Registers a standing watch and returns immediately. When a matching departure
+    is within lead_minutes of the stop (optionally only during a daily time
+    window), the server pushes an MCP log notification (logger="events", payload
+    {"event":"bus_approaching", ...}) to this session — each matching trip fires
+    once. Requires a persistent session (stdio or stateful HTTP). Use
+    list_watches to review and cancel_watch to stop one.
+    """
+    assert _static is not None and _watches is not None
+    await _static.ensure_loaded()
+    try:
+        watch = make_watch(
+            _static, stop_id, route, direction, lead_minutes, window,
+            _client_name(ctx), ctx.session,
+        )
+    except ValueError as exc:
+        return f"Could not create watch: {exc}"
+    _watches.add(watch)
+    return f"Watching: {watch.describe()}. Watch id {watch.id}. I'll notify you here when one is due."
+
+
+@mcp.tool
+async def list_watches(ctx: Context) -> str:
+    """List your active departure watches (see watch_departures)."""
+    assert _watches is not None
+    _watches.touch_session(_client_name(ctx), ctx.session)
+    watches = _watches.list_for(_client_name(ctx))
+    if not watches:
+        return "No active watches. Create one with watch_departures."
+    lines = [f"{len(watches)} active watch(es):"]
+    for w in watches:
+        lines.append(f"  [{w.id}] {w.describe()}")
+    return "\n".join(lines)
+
+
+@mcp.tool
+async def cancel_watch(
+    ctx: Context,
+    watch_id: Annotated[str, "The watch id returned by watch_departures / list_watches"],
+) -> str:
+    """Cancel a departure watch by id."""
+    assert _watches is not None
+    watch = _watches.remove(watch_id)
+    if watch is None:
+        return f"No watch with id {watch_id!r}."
+    return f"Cancelled watch {watch_id}: {watch.describe()}."
 
 
 # -- Lifecycle -------------------------------------------------------------

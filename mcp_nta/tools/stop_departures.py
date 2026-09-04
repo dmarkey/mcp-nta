@@ -114,25 +114,21 @@ def _resolve_delay(
     return None
 
 
-async def get_stop_departures(
+async def compute_departures(
     static: StaticDataManager,
     realtime: RealtimeClient,
     stop_id: str,
-    route: str | None = None,
-    minutes: int = 60,
-) -> str:
-    await static.ensure_loaded()
-    stop = static.get_stop(stop_id)
-    stop_name = stop.name if stop else stop_id
+    route_ids: set[str] | None,
+    minutes: int,
+    now: datetime.datetime,
+) -> tuple[list[Departure], object]:
+    """Build the list of upcoming departures at a stop, with live overlay.
 
-    route_ids: set[str] | None = None
-    if route:
-        route_ids = set(static.get_route_ids_by_short_name(route))
-        if not route_ids:
-            return f'Route "{route}" not found.'
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-
+    Returns ``(departures, feed)``; the feed is returned so callers can read
+    its freshness.  This is the structured core shared by the ``get_departures``
+    tool (which formats it) and the departure watcher (which matches on it), so
+    both see the identical, corrected prediction logic.
+    """
     # 1. Get scheduled arrivals from static data
     scheduled = static.get_scheduled_stop_times(stop_id, now, minutes, route_ids)
 
@@ -183,10 +179,35 @@ async def get_stop_departures(
                 predicted=predicted_dt,
                 delay_seconds=delay_seconds,
                 status=status,
+                trip_id=entry.trip_id,
             )
         )
 
     departures.sort(key=lambda d: d.predicted)
+    return departures, feed
+
+
+async def get_stop_departures(
+    static: StaticDataManager,
+    realtime: RealtimeClient,
+    stop_id: str,
+    route: str | None = None,
+    minutes: int = 60,
+) -> str:
+    await static.ensure_loaded()
+    stop = static.get_stop(stop_id)
+    stop_name = stop.name if stop else stop_id
+
+    route_ids: set[str] | None = None
+    if route:
+        route_ids = set(static.get_route_ids_by_short_name(route))
+        if not route_ids:
+            return f'Route "{route}" not found.'
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    departures, feed = await compute_departures(
+        static, realtime, stop_id, route_ids, minutes, now
+    )
     departures = departures[:20]
 
     if not departures:
