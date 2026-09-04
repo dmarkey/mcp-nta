@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 
 from .models import Route, Stop
+from .tls import ssl_context
 from .util import route_type_name
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ class StaticDataManager:
         # Step 1: download files (async, non-blocking)
         gtfs_path = cache / "gtfs_download.zip"
         naptan_path = cache / "naptan_download.csv"
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, verify=ssl_context()) as client:
             await asyncio.gather(
                 self._download_to_file(client, GTFS_URL, gtfs_path),
                 self._download_to_file(client, NAPTAN_STOPS_URL, naptan_path),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import time
@@ -9,11 +10,18 @@ import time
 import httpx
 from google.transit.gtfs_realtime_pb2 import FeedMessage  # pyright: ignore
 
+from .tls import ssl_context
+
 logger = logging.getLogger(__name__)
 
 TRIP_UPDATES_URL = "https://api.nationaltransport.ie/gtfsr/v2/TripUpdates"
 VEHICLES_URL = "https://api.nationaltransport.ie/gtfsr/v2/Vehicles"
 COMBINED_URL = "https://api.nationaltransport.ie/gtfsr/v2/gtfsr"
+
+# The NTA API sits behind a flaky load balancer; a dropped connection on one
+# attempt usually succeeds on the next.
+MAX_ATTEMPTS = 3
+RETRY_DELAY = 0.5
 
 
 class RealtimeClient:
@@ -29,14 +37,30 @@ class RealtimeClient:
         if cached and (time.time() - cached[0]) < cache_ttl:
             return cached[1]
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(url, headers=self._headers())
-            resp.raise_for_status()
+        content = await self._get(url)
 
         feed = FeedMessage()
-        feed.ParseFromString(resp.content)
+        feed.ParseFromString(content)
         self._cache[url] = (time.time(), feed)
         return feed
+
+    async def _get(self, url: str) -> bytes:
+        """GET *url*, retrying transport-level failures a few times."""
+        async with httpx.AsyncClient(timeout=30, verify=ssl_context()) as client:
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
+                    resp = await client.get(url, headers=self._headers())
+                    resp.raise_for_status()
+                    return resp.content
+                except httpx.TransportError as exc:
+                    if attempt == MAX_ATTEMPTS:
+                        raise
+                    logger.warning(
+                        "%s failed (attempt %d/%d): %s — retrying",
+                        url, attempt, MAX_ATTEMPTS, exc,
+                    )
+                    await asyncio.sleep(RETRY_DELAY * attempt)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def get_feed_age(self, feed: FeedMessage) -> int | None:
         """Return the age of a feed in seconds based on its header timestamp.
