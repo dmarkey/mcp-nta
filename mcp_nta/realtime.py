@@ -88,3 +88,33 @@ class RealtimeClient:
 
     async def get_alerts(self, cache_ttl: int = 60) -> FeedMessage:
         return await self._fetch(COMBINED_URL, cache_ttl)
+
+
+def stop_time_prediction(stu) -> tuple[datetime.datetime | None, int | None]:
+    """Extract (absolute_arrival, delay_seconds) from a StopTimeUpdate.
+
+    A delay of exactly ``0`` means "on time" — a genuine prediction — so the
+    delay fields are probed with ``HasField`` rather than for truthiness.
+    Testing ``stu.arrival.delay`` directly silently discards every punctual
+    service, which is roughly a third of the NTA feed.
+
+    Either element may be None; both are None when the feed carries no
+    prediction for this stop.
+    """
+    arrival_dt: datetime.datetime | None = None
+    delay: int | None = None
+
+    if stu.HasField("arrival") and stu.arrival.time > 0:
+        arrival_dt = datetime.datetime.fromtimestamp(
+            stu.arrival.time, tz=datetime.timezone.utc
+        )
+    elif stu.HasField("arrival") and stu.arrival.HasField("delay"):
+        delay = stu.arrival.delay
+    elif stu.HasField("departure") and stu.departure.HasField("delay"):
+        delay = stu.departure.delay
+
+    # Guard against nonsensical values (more than a week either way).
+    if delay is not None and abs(delay) > 7 * 24 * 60 * 60:
+        return None, None
+
+    return arrival_dt, delay

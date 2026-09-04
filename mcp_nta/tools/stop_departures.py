@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime
 
 from ..models import Departure
-from ..realtime import RealtimeClient
+from ..realtime import RealtimeClient, stop_time_prediction
 from ..static_data import StaticDataManager
 from ..util import delay_text, format_time, relative_time
 
@@ -42,23 +42,7 @@ def _build_live_delays(
                 continue
 
             seq = stu.stop_sequence
-            arrival_time_abs: datetime.datetime | None = None
-            delay: int | None = None
-
-            if stu.HasField("arrival") and stu.arrival.time > 0:
-                arrival_time_abs = datetime.datetime.fromtimestamp(
-                    stu.arrival.time, tz=datetime.timezone.utc
-                )
-            elif stu.HasField("arrival") and stu.arrival.delay:
-                delay = stu.arrival.delay
-                # Filter out nonsensical delays (> 1 week or large negative)
-                if delay < -60 * 60 * 24 * 7:
-                    continue
-            elif stu.HasField("departure") and stu.departure.delay:
-                delay = stu.departure.delay
-                if delay < -60 * 60 * 24 * 7:
-                    continue
-
+            arrival_time_abs, delay = stop_time_prediction(stu)
             trip_delays.append((seq, delay, arrival_time_abs))
 
         if trip_delays:

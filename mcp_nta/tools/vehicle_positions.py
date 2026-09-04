@@ -6,6 +6,7 @@ from ..models import VehiclePosition
 from ..realtime import RealtimeClient
 from ..static_data import StaticDataManager
 from ..util import haversine_km
+from ._common import no_live_data_message
 
 
 async def get_vehicle_positions(  # noqa: PLR0913
@@ -71,6 +72,8 @@ async def get_vehicle_positions(  # noqa: PLR0913
     positions = positions[:limit]
 
     if not positions:
+        if route and route_ids and latitude is None:
+            return no_live_data_message(static, route, route_ids)
         filter_desc = f" on route {route}" if route else " in the specified area"
         return f"No vehicles found{filter_desc}."
 

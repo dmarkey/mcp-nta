@@ -11,9 +11,10 @@ from __future__ import annotations
 import datetime
 
 from ..models import Stop
-from ..realtime import RealtimeClient
+from ..realtime import RealtimeClient, stop_time_prediction
 from ..static_data import StaticDataManager
 from ..util import format_time, haversine_km, relative_time
+from ._common import no_live_data_message
 
 
 async def track_route(
@@ -96,15 +97,7 @@ async def track_route(
         for stu in tu.stop_time_update:
             stop_id_rt = stu.stop_id if stu.stop_id else None
             seq = stu.stop_sequence
-            arrival_dt: datetime.datetime | None = None
-            delay: int | None = None
-
-            if stu.HasField("arrival") and stu.arrival.time > 0:
-                arrival_dt = datetime.datetime.fromtimestamp(
-                    stu.arrival.time, tz=datetime.timezone.utc
-                )
-            elif stu.HasField("arrival") and stu.arrival.delay:
-                delay = stu.arrival.delay
+            arrival_dt, delay = stop_time_prediction(stu)
 
             predictions.append((stop_id_rt or "", seq, arrival_dt, delay))
 
@@ -115,7 +108,7 @@ async def track_route(
     all_trip_ids = set(vehicle_positions.keys()) | set(trip_stop_predictions.keys())
 
     if not all_trip_ids:
-        return f"No active trips found on route {route}."
+        return no_live_data_message(static, route, route_ids)
 
     # Build output for each trip
     trip_summaries: list[tuple[datetime.datetime | None, str]] = []
@@ -172,7 +165,7 @@ async def track_route(
 
     if not trip_summaries:
         dir_info = f" ({direction})" if direction else ""
-        return f"No active trips found on route {route}{dir_info}."
+        return no_live_data_message(static, route, route_ids, dir_info)
 
     # Freshness info
     freshness_parts = []

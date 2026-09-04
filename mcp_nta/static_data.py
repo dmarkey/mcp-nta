@@ -609,6 +609,24 @@ class StaticDataManager:
             return False
         return bool(row[0])
 
+    def count_scheduled_trips(self, route_ids: set[str], date: datetime.date) -> int:
+        """Number of trips scheduled on *date* across *route_ids*.
+
+        Lets callers tell "this route isn't running" apart from "this route is
+        running but the realtime feed doesn't cover it" — the NTA feed omits
+        some routes entirely, and the two cases otherwise look identical.
+        """
+        if not route_ids:
+            return 0
+        db = self._get_db()
+        placeholders = ",".join("?" * len(route_ids))
+        rows = db.execute(
+            f"SELECT service_id, COUNT(*) FROM trips "
+            f"WHERE route_id IN ({placeholders}) GROUP BY service_id",
+            list(route_ids),
+        ).fetchall()
+        return sum(n for service_id, n in rows if self.is_service_running(service_id, date))
+
     def get_scheduled_stop_times(
         self,
         stop_id: str,
