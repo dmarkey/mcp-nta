@@ -100,9 +100,10 @@ async def get_service_alerts(
         # so callers don't read silence as a confirmed all-clear.
         if total_alerts == 0:
             return (
-                "Service alerts are not available: NTA's GTFS-Realtime feed does not "
-                "publish service alerts, so disruptions cannot be confirmed or ruled "
-                "out from this data source. Check the operator's own service updates."
+                "Service alerts are not available: no service alerts are present in "
+                "NTA's GTFS-Realtime feed right now, so disruptions cannot be "
+                "confirmed or ruled out from this data source. Check the operator's "
+                "own service updates."
             )
         if route:
             filter_desc = f" affecting route {route}"

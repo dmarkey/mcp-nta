@@ -12,9 +12,10 @@ def no_live_data_message(
 ) -> str:
     """Explain an empty realtime result, distinguishing the two causes.
 
-    The NTA feed omits some routes entirely, so "no vehicles" can mean either
-    that the route isn't running or that it is running unreported.  Checking
-    today's schedule tells them apart.
+    The NTA feed does not always report every scheduled route — coverage comes
+    and goes over the day — so "no vehicles" can mean either that the route
+    isn't running or that it is running unreported.  Checking today's schedule
+    tells them apart.
     """
     today = datetime.datetime.now(datetime.timezone.utc).date()
     scheduled = static.count_scheduled_trips(route_ids, today)
