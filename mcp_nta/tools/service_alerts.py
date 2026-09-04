@@ -23,10 +23,12 @@ async def get_service_alerts(
 
     feed = await realtime.get_alerts()
     alerts: list[Alert] = []
+    total_alerts = 0
 
     for entity in feed.entity:
         if not entity.HasField("alert"):
             continue
+        total_alerts += 1
         a = entity.alert
 
         affected_route_ids: list[str] = []
@@ -91,13 +93,28 @@ async def get_service_alerts(
         )
 
     if not alerts:
-        filter_desc = ""
+        # The NTA GTFS-Realtime feed does not currently publish a service alerts
+        # feed — the "combined" endpoint is an alias of TripUpdates and carries
+        # no alert entities. Distinguish that (nothing to report because the
+        # source is empty) from "the feed has alerts, none match this filter",
+        # so callers don't read silence as a confirmed all-clear.
+        if total_alerts == 0:
+            return (
+                "Service alerts are not available: NTA's GTFS-Realtime feed does not "
+                "publish service alerts, so disruptions cannot be confirmed or ruled "
+                "out from this data source. Check the operator's own service updates."
+            )
         if route:
             filter_desc = f" affecting route {route}"
         elif stop_id:
             s = static.get_stop(stop_id)
             filter_desc = f" affecting {s.name if s else stop_id}"
-        return f"No active service alerts{filter_desc}."
+        else:
+            filter_desc = ""
+        return (
+            f"No active service alerts{filter_desc} "
+            f"({total_alerts} alert(s) active on other routes/stops)."
+        )
 
     filter_desc = ""
     if route:

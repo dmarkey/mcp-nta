@@ -104,7 +104,12 @@ async def get_service_alerts(
     route: Annotated[str | None, "Filter by route short name"] = None,
     stop_id: Annotated[str | None, "Filter by stop ID"] = None,
 ) -> str:
-    """Get active service alerts for Irish public transport, optionally filtered by route or stop."""
+    """Get active service alerts for Irish public transport, optionally filtered by route or stop.
+
+    Note: NTA's GTFS-Realtime feed does not currently publish service alerts, so
+    this usually reports that alerts are unavailable. An empty result is not a
+    confirmation that services are running normally.
+    """
     assert _static is not None and _realtime is not None
     return await _get_service_alerts(_static, _realtime, route, stop_id)
 
