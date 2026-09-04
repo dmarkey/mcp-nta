@@ -158,6 +158,22 @@ async def nearby_transport(
 # -- Departure watches -----------------------------------------------------
 
 @mcp.tool
+async def subscribe_events(ctx: Context) -> str:
+    """Register this session as the delivery channel for server-push events.
+
+    Call once after connecting (and again after reconnecting; repeat calls are
+    harmless). Departure-watch notifications (see watch_departures) are pushed
+    as MCP log notifications with logger="events". Clients that subscribe on
+    connect keep receiving events across reconnects. Requires a persistent
+    session (stdio, or HTTP with NTA_STATELESS=false).
+    """
+    assert _watches is not None
+    _watches.touch_session(_client_name(ctx), ctx.session)
+    return ("Subscribed: departure-watch events for this client will be "
+            "delivered to this session as log notifications (logger='events').")
+
+
+@mcp.tool
 async def watch_departures(
     ctx: Context,
     stop_id: Annotated[str, "Stop/station ID to watch (use search_transport to find it)"],

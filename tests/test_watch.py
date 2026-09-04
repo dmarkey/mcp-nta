@@ -197,3 +197,17 @@ async def test_delivery_failure_keeps_fired_marker(monkeypatch):
     reg.add(w)
     await _run_check(reg, w, now, "2026-09-05", monkeypatch)
     assert ("t1", "2026-09-05") in w.fired  # not retried in a storm on reconnect
+
+
+async def test_subscribed_session_overrides_capture(monkeypatch):
+    """A session registered via touch_session (subscribe_events) wins over the
+    one captured when the watch was created — so delivery follows reconnects."""
+    now = datetime.datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    creation_sess = _FakeSession()
+    reconnect_sess = _FakeSession()
+    reg = _StubRegistry([_dep("Wilton Terrace", 15, now, "t1")])
+    w = _watch(creation_sess)
+    reg.add(w)
+    reg.touch_session("test", reconnect_sess)  # client reconnected + re-subscribed
+    await _run_check(reg, w, now, "2026-09-05", monkeypatch)
+    assert reconnect_sess.sent and not creation_sess.sent
