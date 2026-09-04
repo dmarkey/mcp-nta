@@ -172,10 +172,16 @@ class WatchRegistry:
             marker = (dep.trip_id, today)
             if marker in watch.fired:
                 continue
-            watch.fired.add(marker)
-            await self._deliver(watch, dep, round(eta))
+            # Mark fired only if delivery succeeds. A bus that already passed
+            # can't re-fire (eta < 0 is excluded above, and compute_departures
+            # drops departures more than a minute in the past), so retrying a
+            # failed send on the next cycle re-notifies a still-approaching bus
+            # rather than losing the one notification that matters.
+            if await self._deliver(watch, dep, round(eta)):
+                watch.fired.add(marker)
 
-    async def _deliver(self, watch: Watch, dep, eta_minutes: int) -> None:
+    async def _deliver(self, watch: Watch, dep, eta_minutes: int) -> bool:
+        """Push one event. Returns True if the client accepted it."""
         live = dep.status != "scheduled"
         payload = {
             "event": "bus_approaching",
@@ -198,10 +204,12 @@ class WatchRegistry:
             await session.send_log_message(  # type: ignore[attr-defined]
                 level="notice", data=payload, logger="events"
             )
+            return True
         except Exception:
-            # Client gone; keep the watch and the fired-marker so we don't spam
-            # a reconnecting client with a burst of past events.
+            # Client gone (e.g. mid-reconnect). Leave the trip unmarked so the
+            # next cycle retries while the bus is still approaching.
             logger.warning("delivery failed for watch %s (client %s)", watch.id, watch.client)
+            return False
 
 
 def make_watch(

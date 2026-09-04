@@ -75,14 +75,12 @@ class _FakeStatic:
 
 
 class _StubRegistry(WatchRegistry):
-    """WatchRegistry with compute_departures stubbed to a fixed list."""
+    """WatchRegistry holding a fixed departure list; _run_check patches the
+    module-level compute_departures to return it."""
 
     def __init__(self, departures):
         super().__init__(static=_FakeStatic(), realtime=None)  # type: ignore[arg-type]
         self._departures = departures
-
-    async def _compute(self, *a, **k):
-        return self._departures, None
 
 
 def _dep(dest, eta_min, now, trip_id, status="on time"):
@@ -109,11 +107,13 @@ def _watch(session, **over):
 
 
 async def _run_check(registry, watch, now, today, monkeypatch):
-    monkeypatch.setattr(registry, "_compute", registry._compute, raising=False)
-    # patch compute_departures used inside _check_watch
+    # _check_watch calls the module-level compute_departures; stub it to the
+    # registry's fixed departure list so the test needs no DB or feed.
     import mcp_nta.watch as wmod
+
     async def fake_compute(static, realtime, stop_id, route_ids, minutes, n):
         return registry._departures, None
+
     monkeypatch.setattr(wmod, "compute_departures", fake_compute)
     await registry._check_watch(watch, now, today)
 
@@ -188,7 +188,9 @@ async def test_scheduled_status_marked_not_live(monkeypatch):
     assert sess.sent[0]["data"]["live"] is False
 
 
-async def test_delivery_failure_keeps_fired_marker(monkeypatch):
+async def test_delivery_failure_retries_next_cycle(monkeypatch):
+    """A failed send must NOT mark the trip fired — the still-approaching bus
+    should be re-notified on the next poll once the client is back."""
     now = datetime.datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
     sess = _FakeSession()
     sess.fail = True
@@ -196,7 +198,12 @@ async def test_delivery_failure_keeps_fired_marker(monkeypatch):
     w = _watch(sess)
     reg.add(w)
     await _run_check(reg, w, now, "2026-09-05", monkeypatch)
-    assert ("t1", "2026-09-05") in w.fired  # not retried in a storm on reconnect
+    assert ("t1", "2026-09-05") not in w.fired   # not marked -> will retry
+    # client reconnects; next cycle delivers and only then marks fired
+    sess.fail = False
+    await _run_check(reg, w, now, "2026-09-05", monkeypatch)
+    assert len(sess.sent) == 1
+    assert ("t1", "2026-09-05") in w.fired
 
 
 async def test_subscribed_session_overrides_capture(monkeypatch):
