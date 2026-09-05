@@ -15,7 +15,7 @@ Built with [FastMCP](https://github.com/PrefectHQ/fastmcp). Inspired by [ireland
 | `get_service_alerts` | Active service alerts filtered by route or stop. |
 | `get_route_transport` | Ordered list of bus stops, train stations, or tram stops on a route. |
 | `nearby_transport` | Find the nearest bus stops, train stations, and tram stops to a location. Filter by route, radius, or transport type (`bus`, `rail`, `tram`). |
-| `watch_departures` | Get a push notification when a bus/train is N minutes from a stop, optionally only in a daily time window and toward a given direction. |
+| `watch_departures` | Get a push notification when a bus/train is N minutes from a stop, optionally only in a daily time window, on certain days, and toward a given direction. |
 | `subscribe_events` | Register this session as the delivery channel for watch events. Call on connect. |
 | `list_watches` / `cancel_watch` | Review and cancel active departure watches. |
 
@@ -26,8 +26,10 @@ Built with [FastMCP](https://github.com/PrefectHQ/fastmcp). Inspired by [ireland
 ```
 watch_departures(stop_id="8220DB000315", route="37",
                  direction="Wilton Terrace", lead_minutes=20,
-                 window="08:00-12:00")
+                 window="08:00-12:00", days="weekdays")
 ```
+
+The `window` is a `"HH:MM-HH:MM"` time band in Europe/Dublin local time (omit for any time); `days` accepts `"weekdays"`, `"weekends"`, comma-separated day names (`"mon,wed,fri"`), or ranges (`"mon-fri"`) — omit for every day.
 
 Requires a **persistent session** — the default `stdio` transport (one session per process) or HTTP with `NTA_STATELESS=false`. Your MCP client must also surface server log notifications for you to see them. Notifications are built from real-time predictions where available and fall back to the schedule otherwise (the payload's `live` flag says which); routes the NTA feed does not report in real time, and the post-midnight service-day window, are subject to the same coverage limits as `get_departures`.
 

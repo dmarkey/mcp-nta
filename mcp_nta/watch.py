@@ -65,6 +65,73 @@ def window_contains(window: tuple[int, int] | None, local_minute: int) -> bool:
     return local_minute >= start or local_minute <= end  # wraps past midnight
 
 
+# Monday=0 .. Sunday=6, matching datetime.date.weekday().
+_DAY_NUMBERS = {
+    "mon": 0, "monday": 0,
+    "tue": 1, "tues": 1, "tuesday": 1,
+    "wed": 2, "wednesday": 2,
+    "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "fri": 4, "friday": 4,
+    "sat": 5, "saturday": 5,
+    "sun": 6, "sunday": 6,
+}
+_DAY_SHORTCUTS = {
+    "weekdays": {0, 1, 2, 3, 4},
+    "weekends": {5, 6},
+    "daily": None,
+    "all": None,
+}
+
+
+def parse_days(days: str | None) -> set[int] | None:
+    """Parse a day filter into weekday numbers (Mon=0..Sun=6).
+
+    Returns None for an empty filter (active every day). Accepts
+    comma-separated day names ("mon,wed,fri", full names also work),
+    ranges ("mon-fri", wrapping past Sunday is allowed), and the shortcuts
+    "weekdays", "weekends", "daily", and "all".
+    """
+    if not days or not days.strip():
+        return None
+    picked: set[int] = set()
+    for raw_token in days.split(","):
+        token = raw_token.strip().lower()
+        if not token:
+            continue
+        if token in _DAY_SHORTCUTS:
+            shortcut = _DAY_SHORTCUTS[token]
+            if shortcut is None:
+                return None
+            picked |= shortcut
+            continue
+        if "-" in token:
+            start_s, _, end_s = token.partition("-")
+            start = _DAY_NUMBERS.get(start_s.strip())
+            end = _DAY_NUMBERS.get(end_s.strip())
+            if start is None or end is None:
+                raise ValueError(
+                    f"Invalid days {days!r}: expected day names like "
+                    '"mon-fri", e.g. "weekdays" or "mon,wed,fri".'
+                )
+            day = start
+            while True:
+                picked.add(day)
+                if day == end:
+                    break
+                day = (day + 1) % 7
+            continue
+        day = _DAY_NUMBERS.get(token)
+        if day is None:
+            raise ValueError(
+                f"Invalid days {days!r}: expected day names like "
+                '"mon-fri", e.g. "weekdays" or "mon,wed,fri".'
+            )
+        picked.add(day)
+    if not picked:
+        return None
+    return picked
+
+
 @dataclass
 class Watch:
     id: str
@@ -80,6 +147,8 @@ class Watch:
     session: object
     created: datetime.datetime
     fired: set[tuple[str, str]] = field(default_factory=set)  # (trip_id, date)
+    days: set[int] | None = None    # weekdays (Mon=0..Sun=6), or None = every day
+    days_text: str | None = None
 
     def describe(self) -> str:
         parts = [f"route {self.route}" if self.route else "all routes"]
@@ -89,6 +158,8 @@ class Watch:
         parts.append(f"{self.lead_minutes} min out")
         if self.window_text:
             parts.append(f"between {self.window_text}")
+        if self.days_text:
+            parts.append(f"on {self.days_text}")
         return ", ".join(parts)
 
 
@@ -138,9 +209,12 @@ class WatchRegistry:
         now = datetime.datetime.now(datetime.timezone.utc)
         local = now.astimezone(_dublin_tz())
         local_minute = local.hour * 60 + local.minute
+        weekday = local.weekday()
         today = local.date().isoformat()
 
         for watch in list(self._watches.values()):
+            if watch.days is not None and weekday not in watch.days:
+                continue
             if not window_contains(watch.window, local_minute):
                 continue
             try:
@@ -151,6 +225,12 @@ class WatchRegistry:
     async def _check_watch(
         self, watch: Watch, now: datetime.datetime, today: str
     ) -> None:
+        # Day gate (Europe/Dublin local day): the poll loop pre-filters, but
+        # check here too so direct callers get the same semantics.
+        if watch.days is not None:
+            weekday = now.astimezone(_dublin_tz()).weekday()
+            if weekday not in watch.days:
+                return
         # Look a little past the lead time so a bus is caught the first cycle it
         # crosses the threshold.
         window_minutes = watch.lead_minutes + 5
@@ -221,6 +301,7 @@ def make_watch(
     window: str | None,
     client: str,
     session: object,
+    days: str | None = None,
 ) -> Watch:
     """Validate inputs and build a Watch (does not register it)."""
     stop = static.get_stop(stop_id)
@@ -234,6 +315,7 @@ def make_watch(
     if lead_minutes <= 0 or lead_minutes > 120:
         raise ValueError("lead_minutes must be between 1 and 120.")
     win = parse_window(window)
+    parsed_days = parse_days(days)
     return Watch(
         id=secrets.token_hex(4),
         stop_id=stop_id,
@@ -247,4 +329,6 @@ def make_watch(
         client=client,
         session=session,
         created=datetime.datetime.now(datetime.timezone.utc),
+        days=parsed_days,
+        days_text=days.strip() if days and days.strip() else None,
     )
