@@ -181,22 +181,23 @@ async def watch_departures(
     direction: Annotated[str | None, "Only match this direction — a substring of the destination/headsign, e.g. 'Wilton Terrace'"] = None,
     lead_minutes: Annotated[int, "Notify when a matching departure is this many minutes away (1-120, default 20)"] = 20,
     window: Annotated[str | None, "Only notify during this local time window, 'HH:MM-HH:MM', e.g. '08:00-12:00'. Omit for any time."] = None,
+    days: Annotated[str | None, "Only notify on these days, e.g. 'weekdays', 'weekends', or 'mon,wed,fri'. Omit for every day."] = None,
 ) -> str:
     """Get a push notification when a bus/train is a set number of minutes from a stop.
 
     Registers a standing watch and returns immediately. When a matching departure
     is within lead_minutes of the stop (optionally only during a daily time
-    window), the server pushes an MCP log notification (logger="events", payload
-    {"event":"bus_approaching", ...}) to this session — each matching trip fires
-    once. Requires a persistent session (stdio or stateful HTTP). Use
-    list_watches to review and cancel_watch to stop one.
+    window and on certain days), the server pushes an MCP log notification
+    (logger="events", payload {"event":"bus_approaching", ...}) to this session
+    — each matching trip fires once. Requires a persistent session (stdio or
+    stateful HTTP). Use list_watches to review and cancel_watch to stop one.
     """
     assert _static is not None and _watches is not None
     await _static.ensure_loaded()
     try:
         watch = make_watch(
             _static, stop_id, route, direction, lead_minutes, window,
-            _client_name(ctx), ctx.session,
+            _client_name(ctx), ctx.session, days,
         )
     except ValueError as exc:
         return f"Could not create watch: {exc}"

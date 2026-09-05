@@ -10,6 +10,7 @@ from mcp_nta.models import Departure
 from mcp_nta.watch import (
     Watch,
     WatchRegistry,
+    parse_days,
     parse_window,
     window_contains,
 )
@@ -53,6 +54,34 @@ class TestWindowContains:
         assert window_contains(w, 1350)   # 22:30
         assert window_contains(w, 30)     # 00:30
         assert not window_contains(w, 720)  # 12:00
+
+
+class TestParseDays:
+    def test_none_and_blank_mean_every_day(self):
+        assert parse_days(None) is None
+        assert parse_days("  ") is None
+        assert parse_days("daily") is None
+        assert parse_days("all") is None
+
+    def test_shortcuts(self):
+        assert parse_days("weekdays") == {0, 1, 2, 3, 4}
+        assert parse_days("weekends") == {5, 6}
+
+    def test_names_and_lists(self):
+        assert parse_days("mon") == {0}
+        assert parse_days("mon,wed,fri") == {0, 2, 4}
+        assert parse_days("Monday, Wednesday") == {0, 2}
+
+    def test_ranges(self):
+        assert parse_days("mon-fri") == {0, 1, 2, 3, 4}
+        assert parse_days("sat-sun") == {5, 6}
+        assert parse_days("fri-mon") == {4, 5, 6, 0}  # wraps past Sunday
+
+    def test_bad_input_raises(self):
+        with pytest.raises(ValueError):
+            parse_days("funday")
+        with pytest.raises(ValueError):
+            parse_days("mon-funday")
 
 
 class _FakeSession:
@@ -204,6 +233,40 @@ async def test_delivery_failure_retries_next_cycle(monkeypatch):
     await _run_check(reg, w, now, "2026-09-05", monkeypatch)
     assert len(sess.sent) == 1
     assert ("t1", "2026-09-05") in w.fired
+
+
+async def test_days_filter_suppresses_off_days(monkeypatch):
+    """A weekdays-only watch stays quiet on a Saturday (2026-09-05), even for
+    a matching departure inside the lead time."""
+    now = datetime.datetime(2026, 9, 5, 9, 0, tzinfo=UTC)  # Saturday
+    sess = _FakeSession()
+    reg = _StubRegistry([_dep("Wilton Terrace", 15, now, "t1")])
+    w = _watch(sess, days={0, 1, 2, 3, 4}, days_text="weekdays")
+    reg.add(w)
+    await _run_check(reg, w, now, "2026-09-05", monkeypatch)
+    assert sess.sent == []
+    assert ("t1", "2026-09-05") not in w.fired
+
+
+async def test_days_filter_fires_on_matching_day(monkeypatch):
+    """The same weekdays watch fires on a Monday; a weekends watch fires on
+    the Saturday. Day-of-week is Europe/Dublin local time."""
+    saturday = datetime.datetime(2026, 9, 5, 9, 0, tzinfo=UTC)
+    monday = datetime.datetime(2026, 9, 7, 9, 0, tzinfo=UTC)
+
+    sess = _FakeSession()
+    reg = _StubRegistry([_dep("Wilton Terrace", 15, monday, "t1")])
+    w = _watch(sess, days={0, 1, 2, 3, 4}, days_text="weekdays")
+    reg.add(w)
+    await _run_check(reg, w, monday, "2026-09-07", monkeypatch)
+    assert len(sess.sent) == 1
+
+    sess2 = _FakeSession()
+    reg2 = _StubRegistry([_dep("Wilton Terrace", 15, saturday, "t1")])
+    w2 = _watch(sess2, days={5, 6}, days_text="weekends")
+    reg2.add(w2)
+    await _run_check(reg2, w2, saturday, "2026-09-05", monkeypatch)
+    assert len(sess2.sent) == 1
 
 
 async def test_subscribed_session_overrides_capture(monkeypatch):
